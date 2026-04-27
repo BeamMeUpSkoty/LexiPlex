@@ -1,0 +1,11 @@
+start,end,text,speaker
+0.0,2.81,"I am doing well, thanks!",Speaker_A
+3.38,5.54,Final test utterance.,Speaker_B
+6.4,7.02,Let’s analyze this.,Speaker_A
+7.68,8.33,"Absolutely, loud and clear.",Speaker_B
+9.22,9.74,Let’s analyze this.,Speaker_A
+10.5,12.57,"Absolutely, loud and clear.",Speaker_B
+12.71,15.66,"I am doing well, thanks!",Speaker_A
+16.56,18.08,"Absolutely, loud and clear.",Speaker_B
+18.4,20.97,This is a test sentence.,Speaker_A
+21.9,24.4,Sentiment analysis is fun.,Speaker_B

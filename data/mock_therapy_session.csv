@@ -1,0 +1,31 @@
+start,end,text,speaker
+0.0,3.3,"Hello, how are you feeling today?",Therapist
+4.66,8.7,I've been having trouble sleeping and feeling anxious.,Client
+9.43,13.56,Can you tell me more about what's been keeping you up at night?,Therapist
+15.47,22.53,I keep replaying conversations at work that didn't go well.,Client
+23.4,30.82,I see. What thoughts come up when you replay those moments?,Therapist
+32.23,39.9,I feel like I'm not good enough and that I'll fail.,Client
+41.55,49.42,That sounds very distressing. How long have you felt this way?,Therapist
+51.23,55.04,"For the past few months, ever since I started my new job.",Client
+56.37,63.78,What coping strategies have you tried so far?,Therapist
+65.64,70.88,I tried meditation but it didn't help much.,Client
+72.38,79.9,Have you noticed any patterns in your anxiety?,Therapist
+80.76,88.14,"Yes, it spikes when I have to present or speak in meetings.",Client
+88.64,93.3,Let's explore that fear. What’s the worst that could happen?,Therapist
+93.91,100.26,I worry I'll freeze up and everyone will judge me.,Client
+102.25,107.41,That's understandable. Have you ever experienced that before?,Therapist
+108.89,111.93,"Once, during a big presentation last year.",Client
+113.52,117.47,How did you handle it at that time?,Therapist
+119.4,124.06,"I apologized and tried to continue, but I felt embarrassed.",Client
+125.26,130.13,Let's work on techniques to manage that anxiety in the moment.,Therapist
+131.65,138.77,"Okay, I'm willing to try.",Client
+139.36,143.89,We can practice a brief grounding exercise now if you're comfortable.,Therapist
+144.84,150.76,"Yes, please guide me.",Client
+152.46,157.01,"Focus on your breath; inhale for four counts, hold, then exhale slowly.",Therapist
+158.91,164.11,Like this?,Client
+165.78,172.28,"Yes, exactly. How does your body feel now?",Therapist
+173.51,180.96,"A bit more relaxed, my heart rate has slowed.",Client
+181.85,186.85,Great progress. Let's set a plan for the upcoming week.,Therapist
+188.21,193.62,"Sure, what should I focus on?",Client
+195.24,202.69,Continue grounding exercises and note situations that trigger anxiety.,Therapist
+204.56,210.61,I will do that. Thank you for your support.,Client
