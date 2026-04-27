@@ -23,6 +23,15 @@ def test_base_analyzer_is_abstract():
         BaseAnalyzer()
 
 
+def test_partial_analyzer_missing_name_is_still_abstract():
+    class NoName(BaseAnalyzer):
+        def analyze(self, df, cache):
+            return AnalysisResult(name="x", per_sentence=df.copy(), global_metrics={})
+
+    with pytest.raises(TypeError):
+        NoName()
+
+
 def test_concrete_analyzer_works_when_complete():
     class GoodAnalyzer(BaseAnalyzer):
         @property
