@@ -3,3 +3,7 @@ old/
 venv_lexiplex/
 models/
 .idea
+.python-version
+.superpowers
+docs/
+.worktrees/
