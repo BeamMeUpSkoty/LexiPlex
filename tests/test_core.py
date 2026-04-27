@@ -74,3 +74,35 @@ def test_registry_duplicate_name_raises():
     registry.register(_DoubleAnalyzer())
     with pytest.raises(ValueError, match="already registered"):
         registry.register(_DoubleAnalyzer())
+
+
+def test_registry_empty_run_all_returns_empty_dict():
+    registry = AnalyzerRegistry()
+    df = pd.DataFrame({"sentence": ["hello"]})
+    cache = EmbeddingCache()
+    results = registry.run_all(df, cache)
+    assert results == {}
+
+
+def test_registry_multiple_analyzers_all_appear_in_results():
+    class _AAnalyzer(BaseAnalyzer):
+        @property
+        def name(self) -> str:
+            return "a"
+        def analyze(self, df, cache):
+            return AnalysisResult(name="a", per_sentence=df.copy(), global_metrics={})
+
+    class _BAnalyzer(BaseAnalyzer):
+        @property
+        def name(self) -> str:
+            return "b"
+        def analyze(self, df, cache):
+            return AnalysisResult(name="b", per_sentence=df.copy(), global_metrics={})
+
+    registry = AnalyzerRegistry()
+    registry.register(_AAnalyzer())
+    registry.register(_BAnalyzer())
+    df = pd.DataFrame({"sentence": ["hello"]})
+    cache = EmbeddingCache()
+    results = registry.run_all(df, cache)
+    assert set(results.keys()) == {"a", "b"}

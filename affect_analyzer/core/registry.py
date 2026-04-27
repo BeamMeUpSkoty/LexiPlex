@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-import pandas as pd
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    import pandas as pd
 
 from .base import BaseAnalyzer, AnalysisResult, EmbeddingCache
 
@@ -17,4 +20,10 @@ class AnalyzerRegistry:
         self._analyzers[analyzer.name] = analyzer
 
     def run_all(self, df: pd.DataFrame, cache: EmbeddingCache) -> dict[str, AnalysisResult]:
-        return {name: a.analyze(df, cache) for name, a in self._analyzers.items()}
+        results: dict[str, AnalysisResult] = {}
+        for name, a in self._analyzers.items():
+            try:
+                results[name] = a.analyze(df, cache)
+            except Exception as exc:
+                raise RuntimeError(f"Analyzer '{name}' failed during run_all") from exc
+        return results
