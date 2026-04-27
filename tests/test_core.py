@@ -2,6 +2,7 @@ import pytest
 import numpy as np
 import pandas as pd
 from affect_analyzer.core.base import BaseAnalyzer, AnalysisResult, EmbeddingCache
+from affect_analyzer.core.registry import AnalyzerRegistry
 
 
 def test_embedding_cache_defaults_to_none():
@@ -43,3 +44,33 @@ def test_concrete_analyzer_works_when_complete():
 
     a = GoodAnalyzer()
     assert a.name == "good"
+
+
+class _DoubleAnalyzer(BaseAnalyzer):
+    @property
+    def name(self) -> str:
+        return "double"
+
+    def analyze(self, df, cache):
+        return AnalysisResult(
+            name="double",
+            per_sentence=df.copy(),
+            global_metrics={"count": float(len(df))},
+        )
+
+
+def test_registry_run_all_returns_result_per_analyzer():
+    registry = AnalyzerRegistry()
+    registry.register(_DoubleAnalyzer())
+    df = pd.DataFrame({"sentence": ["hello", "world"]})
+    cache = EmbeddingCache()
+    results = registry.run_all(df, cache)
+    assert "double" in results
+    assert results["double"].global_metrics["count"] == 2.0
+
+
+def test_registry_duplicate_name_raises():
+    registry = AnalyzerRegistry()
+    registry.register(_DoubleAnalyzer())
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(_DoubleAnalyzer())
