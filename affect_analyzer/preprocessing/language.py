@@ -5,8 +5,6 @@ import sys
 import warnings
 import spacy
 from typing import List, Iterable, Optional
-from sklearn.feature_extraction.text import CountVectorizer
-from sklearn.decomposition import LatentDirichletAllocation
 
 def _ensure_spacy_model(model_name: str):
     """
@@ -22,7 +20,7 @@ class LanguageProcessor:
     """
     Efficient processor for text in various languages.
     Ensures spaCy models are installed, caches pipelines, provides text cleanup,
-    sentence splitting, tokenization, and topic identification via LDA.
+    sentence splitting, and tokenization.
     """
     _nlp_cache = {}
 
@@ -45,9 +43,6 @@ class LanguageProcessor:
         self.language = language
         self.disable = disable or ['ner']
         self.nlp = self._load_pipeline(language, self.disable)
-        # placeholders for topic modeling
-        self._topic_vectorizer = None
-        self._topic_model = None
 
     @classmethod
     def _load_pipeline(cls, language: str, disable: List[str]):
@@ -93,30 +88,20 @@ class LanguageProcessor:
 
     def preprocess_transcript(
         self,
-        transcript: 'TranscriptFile',
-        assign_topics: bool = False,
-        num_topics: int = 5,
-        max_features: int = 1000
+        transcript: 'TranscriptFile'
     ) -> pd.DataFrame:
         """
-        Convert transcript to sentence-level DataFrame with tokens,
-        optionally assign topic labels.
+        Convert transcript to sentence-level DataFrame with tokens.
 
         Parameters
         ----------
         transcript : TranscriptFile
             Instance with read_chunks() yielding DataFrames.
-        assign_topics : bool
-            If True, fit LDA and assign topic to each sentence.
-        num_topics : int
-            Number of LDA topics.
-        max_features : int
-            Max vocabulary size for topic vectorizer.
 
         Returns
         -------
         pd.DataFrame
-            Columns: original metadata, 'sentence', 'tokens', optional 'topic'.
+            Columns: original metadata, 'sentence', 'tokens'.
         """
         records = []
         for chunk in transcript.read_chunks():
@@ -128,53 +113,5 @@ class LanguageProcessor:
                     rec['sentence'] = sent
                     rec['tokens'] = tokens
                     records.append(rec)
-        df = pd.DataFrame.from_records(records)
-        # Optional topic modeling
-        if assign_topics:
-            sentences = df['sentence'].tolist()
-            self.fit_topic_model(sentences, num_topics, max_features)
-            df['topic'] = self.assign_topics(sentences)
-        return df
-
-    def fit_topic_model(
-        self,
-        sentences: List[str],
-        num_topics: int = 5,
-        max_features: int = 1000
-    ) -> None:
-        """
-        Fit an LDA topic model on given sentences.
-
-        Parameters
-        ----------
-        sentences : list of str
-        num_topics : int
-        max_features : int
-        """
-        vectorizer = CountVectorizer(max_features=max_features, token_pattern=r"\b\w+\b")
-        term_matrix = vectorizer.fit_transform(sentences)
-        lda = LatentDirichletAllocation(n_components=num_topics, random_state=0)
-        lda.fit(term_matrix)
-        self._topic_vectorizer = vectorizer
-        self._topic_model = lda
-
-    def assign_topics(self, sentences: List[str]) -> List[int]:
-        """
-        Assign most probable topic to each sentence.
-        """
-        if self._topic_model is None or self._topic_vectorizer is None:
-            raise ValueError("Topic model not fitted. Call fit_topic_model first.")
-        term_matrix = self._topic_vectorizer.transform(sentences)
-        topic_dist = self._topic_model.transform(term_matrix)
-        return topic_dist.argmax(axis=1).tolist()
-
-    def get_topic_keywords(self, topic_index: int, top_n: int = 10) -> List[str]:
-        """
-        Retrieve top keywords for a given topic.
-        """
-        if self._topic_model is None or self._topic_vectorizer is None:
-            raise ValueError("Topic model not fitted. Call fit_topic_model first.")
-        feature_names = self._topic_vectorizer.get_feature_names_out()
-        top_ids = self._topic_model.components_[topic_index].argsort()[::-1][:top_n]
-        return [feature_names[i] for i in top_ids]
+        return pd.DataFrame.from_records(records)
 
