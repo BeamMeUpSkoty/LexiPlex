@@ -2,7 +2,7 @@
 
 > **Alpha / Experimental** — APIs may change without notice. Not yet production-ready.
 
-LexiPlex is a Python toolkit for affect analysis of conversational transcripts. Given a timestamped CSV of a dialogue — a therapy session, a clinical interview, a customer service call — it scores each sentence on **valence** (pleasant ↔ unpleasant) and **arousal** (activated ↔ deactivated), assigns topic labels, and plots the results on a Russell circumplex. The output is both human-readable (circumplex PNGs) and machine-readable (a feature CSV), making it useful for researchers, developers, and clinicians alike.
+LexiPlex is a Python library for multi-dimensional language analysis of conversational transcripts. Given a timestamped CSV of a dialogue — a therapy session, a clinical interview, a customer service call — it runs four analyzers in a shared pipeline and produces sentence-level features alongside a five-chapter Streamlit demonstrator.
 
 ---
 
@@ -11,42 +11,61 @@ LexiPlex is a Python toolkit for affect analysis of conversational transcripts. 
 ### Installation
 
 ```bash
-pip install -r requirements.txt
+pip install -e .
 ```
 
-spaCy language models are downloaded automatically on first run. The XLM-RoBERTa model weights are bundled under `models/XLM-RoBERTa-base-MSE/` — no separate download required.
+spaCy language models are downloaded automatically on first run. XLM-RoBERTa model weights should be placed under `models/XLM-RoBERTa-base-MSE/`. If weights are absent the pipeline falls back to random scores (useful for development).
+
+### Streamlit Demo
+
+```bash
+streamlit run app/streamlit_app.py
+```
+
+Loads `data/mock_therapy_session.csv` by default. Navigate the five chapters in the sidebar.
 
 ### CLI
 
 ```bash
-python conversation_affect_analyzer.py \
-  --input data/mock_therapy_session.csv \
-  --topic_method global \
-  --num_topics 5 \
-  --plot_circumplex
+lexiplex data/mock_therapy_session.csv output/ --language en
 ```
 
-This will print per-sentence valence/arousal scores and topic assignments to stdout, and display a circumplex plot. To save plots and the feature CSV programmatically, use `ConversationPipeline` directly (see Architecture Overview).
+Options:
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-m`, `--model` | `models/XLM-RoBERTa-base-MSE` | Model path or HuggingFace ID |
+| `-l`, `--language` | `en` | spaCy language code (`en`, `de`, `fr`, `es`) |
+| `-t`, `--topics` | off | Enable LDA topic assignment |
+| `-v`, `--verbose` | off | DEBUG logging |
 
 ### Python API
 
 ```python
-from conversation_affect_analyzer import ConversationAffectAnalyzer
+from affect_analyzer import AnalyzerRegistry, LexiPlexPipeline
+from affect_analyzer.analyzers.affect import AffectAnalyzer
+from affect_analyzer.analyzers.complexity import ComplexityAnalyzer
+from affect_analyzer.analyzers.clinical import ClinicalMarkerAnalyzer
+from affect_analyzer.analyzers.dynamics import DynamicsAnalyzer
+from affect_analyzer.modelling.valence_arousal import ValenceArousalModel
+import spacy
 
-ca = ConversationAffectAnalyzer(
-    model_dir="models/XLM-RoBERTa-base-MSE",
-    language="en",
-    device="cpu",
-)
+model = ValenceArousalModel("models/XLM-RoBERTa-base-MSE")
+nlp = spacy.load("en_core_web_sm")
 
-global_metrics, per_sentence, metrics_by_topic = ca.analyze(
-    "data/mock_therapy_session.csv",
-    topic_method="global",
-    num_topics=5,
-)
+registry = AnalyzerRegistry()
+registry.register(AffectAnalyzer(model=model))
+registry.register(ComplexityAnalyzer(nlp=nlp))
+registry.register(ClinicalMarkerAnalyzer())
+registry.register(DynamicsAnalyzer())
 
-print(global_metrics)
-print(per_sentence[["sentence", "speaker", "valence", "arousal", "topic"]].head())
+pipeline = LexiPlexPipeline(registry=registry, model=model, language="en")
+results = pipeline.run("data/mock_therapy_session.csv")
+
+# results is a dict keyed by analyzer name
+affect_df = results["affect"].per_sentence
+print(affect_df[["sentence", "speaker", "valence", "arousal"]].head())
+print(results["affect"].global_metrics)
 ```
 
 ---
@@ -55,13 +74,13 @@ print(per_sentence[["sentence", "speaker", "valence", "arousal", "topic"]].head(
 
 LexiPlex expects a UTF-8 CSV with the following columns:
 
-| Column    | Type    | Required | Description                                      |
-|-----------|---------|----------|--------------------------------------------------|
-| `start`   | float   | Yes      | Utterance start time in seconds                  |
-| `end`     | float   | Yes      | Utterance end time in seconds                    |
-| `text`    | string  | Yes      | Spoken text of the utterance                     |
-| `speaker` | string  | No       | Speaker label — enables per-speaker circumplex   |
-| `label`   | string  | No       | Optional annotation label                        |
+| Column    | Type    | Required | Description                                    |
+|-----------|---------|----------|------------------------------------------------|
+| `start`   | float   | Yes      | Utterance start time in seconds                |
+| `end`     | float   | Yes      | Utterance end time in seconds                  |
+| `text`    | string  | Yes      | Spoken text of the utterance                   |
+| `speaker` | string  | No       | Speaker label — enables per-speaker breakdowns |
+| `label`   | string  | No       | Optional annotation label                      |
 
 **Example** (from `data/mock_therapy_session.csv`):
 
@@ -72,23 +91,120 @@ start,end,text,speaker
 9.43,13.56,Can you tell me more about what's been keeping you up at night?,Therapist
 ```
 
-Any two-speaker dialogue fits this format — clinical interviews, customer service calls, research conversations. The `speaker` column is optional but unlocks per-speaker affect breakdowns.
+---
+
+## The Four Analyzers
+
+Each analyzer implements `BaseAnalyzer` and produces an `AnalysisResult` with `per_sentence` (DataFrame) and `global_metrics` (dict).
+
+### AffectAnalyzer
+
+Scores each sentence on **valence** (pleasant ↔ unpleasant) and **arousal** (activated ↔ calm) using XLM-RoBERTa `batch_score()` — a single batched forward pass for the whole transcript.
+
+Columns added: `valence`, `arousal`, optionally `topic`, `topic_label`
+
+Global metrics: duration-weighted `{speaker}_valence_mean`, `{speaker}_arousal_mean` per speaker.
+
+### ComplexityAnalyzer
+
+Measures vocabulary richness, sentence length, and discourse coherence. Coherence reuses sentence embeddings already computed by the pipeline — no extra inference.
+
+Columns added: `word_count`, `type_token_ratio`, `lexical_density`, `coherence_to_prev`
+
+Global metrics: `coherence_mean`, `{speaker}_ttr_mean`, `{speaker}_wc_mean`, `{speaker}_density_mean`
+
+### ClinicalMarkerAnalyzer
+
+Rule-based detection of clinical language markers. No model required — fast, interpretable, works offline.
+
+Columns added: `hedging_rate`, `certainty_rate`, `self_ref_rate`, `negation_density`, `is_question`
+
+Global metrics: all rates per speaker.
+
+**Health context:** High hedging + low certainty = avoidant language. High self-reference + negation are established markers of depressive cognition (Beck, 1979).
+
+### DynamicsAnalyzer
+
+Conversational structure from timestamps alone. Operates at the utterance/turn level.
+
+`per_sentence` columns added: `turn_id`, `is_turn_start`
+
+`metadata["per_speaker"]`: DataFrame with `turns`, `total_duration`, `dominance_pct`, `mean_utterance_length`
+
+`metadata["latencies"]`: list of inter-turn gaps (seconds)
+
+Global metrics: `silence_total`, `latency_mean`, `turn_count`
 
 ---
 
-## Outputs
+## Extending with a Custom Analyzer
 
-Running the pipeline produces:
+Subclass `BaseAnalyzer`, implement `name` and `analyze`, register it:
 
-| Output | Description |
-|--------|-------------|
-| `conversation_features.csv` | Sentence-level DataFrame: `sentence`, `speaker`, `valence`, `arousal`, `topic`, `topic_label`, and optional `salience` |
-| `{speaker}_circumplex.png` | Scatter plot of valence vs. arousal for each speaker |
-| `topic_circumplex.png` | Scatter plot color-coded by LDA topic |
+```python
+from affect_analyzer.core.base import BaseAnalyzer, AnalysisResult, EmbeddingCache
+import pandas as pd
 
-### Reading a Circumplex Plot
+class WordCountAnalyzer(BaseAnalyzer):
+    @property
+    def name(self) -> str:
+        return "word_count"
 
-The circumplex places every sentence in a 2D emotional space bounded by the unit circle:
+    def analyze(self, df: pd.DataFrame, cache: EmbeddingCache) -> AnalysisResult:
+        out = df.copy()
+        out["wc"] = out["sentence"].str.split().str.len()
+        return AnalysisResult(
+            name=self.name,
+            per_sentence=out,
+            global_metrics={"wc_mean": float(out["wc"].mean())},
+        )
+
+registry.register(WordCountAnalyzer())
+```
+
+The new analyzer is automatically included in every `pipeline.run()` call and in the live scorecards if you extend the Streamlit app.
+
+---
+
+## Architecture
+
+```
+affect_analyzer/
+├── core/
+│   ├── base.py           BaseAnalyzer, AnalysisResult, EmbeddingCache
+│   └── registry.py       AnalyzerRegistry
+├── pipeline.py           LexiPlexPipeline — load → embed once → dispatch
+├── analyzers/
+│   ├── affect.py         AffectAnalyzer
+│   ├── complexity.py     ComplexityAnalyzer
+│   ├── clinical.py       ClinicalMarkerAnalyzer
+│   └── dynamics.py       DynamicsAnalyzer
+├── data_types/
+│   └── transcript.py     TranscriptFile — chunked CSV ingestion
+├── preprocessing/
+│   └── language.py       LanguageProcessor — spaCy sentence splitting & tokenization
+├── modelling/
+│   └── valence_arousal.py  ValenceArousalModel — XLM-RoBERTa regression + embeddings
+├── topics/
+│   └── topic_modeler.py  TopicModeler — LDA, sliding-window drift, JS divergence
+├── plotting/
+│   └── circumplex.py     plot_circumplex — matplotlib Russell circumplex
+└── cli.py                lexiplex CLI entry point
+
+app/
+└── streamlit_app.py      Five-chapter guided walkthrough with temporal affect playback
+```
+
+**Pipeline flow:** `LexiPlexPipeline.run()` loads the transcript, sentence-splits it, computes sentence embeddings **once** into a shared `EmbeddingCache`, then calls `registry.run_all(df, cache)`. Every registered analyzer receives the same DataFrame and the same cache — `ComplexityAnalyzer` uses the cached embeddings for coherence scoring without triggering a second model pass.
+
+---
+
+## The Model & Affect Theory
+
+**Russell's circumplex model of affect** (1980) proposes that all emotional states can be described by two independent dimensions:
+
+- **Valence** — pleasantness (−1 = maximally unpleasant, +1 = maximally pleasant)
+- **Arousal** — activation (−1 = maximally calm, +1 = maximally activated)
 
 ```
              High Arousal
@@ -103,93 +219,17 @@ Negative ←────────┼────────→ Positive
              Low Arousal
 ```
 
-Points in the upper-left quadrant (high arousal, negative valence) indicate distress. Points in the lower-right (low arousal, positive valence) indicate calm contentment. Clustering patterns across speakers or topics reveal emotional dynamics in the conversation.
-
----
-
-## Architecture Overview
-
-```
-affect_analyzer/
-├── data_types/transcript.py      TranscriptFile     — chunked CSV ingestion
-├── preprocessing/language.py     LanguageProcessor  — spaCy pipeline, sentence splitting, tokenization
-├── modelling/valence_arousal.py  ValenceArousalModel — XLM-RoBERTa regression + embeddings + salience
-├── topics/topic_modeler.py       TopicModeler       — global LDA, sliding-window drift, JS divergence
-├── features/extractor.py         FeatureExtractor   — plug-in registry for custom sentence features
-├── plotting/circumplex.py        plot_circumplex    — Russell circumplex scatter plot
-├── pipeline.py                   ConversationPipeline — CLI-facing orchestrator
-└── cli.py                        main               — Click CLI entry point
-
-conversation_affect_analyzer.py   ConversationAffectAnalyzer — full-featured Python API orchestrator
-sentiment_exporter.py             SentimentFeatureExporter   — word- and sentence-level affect export
-```
-
-**`FeatureExtractor`** uses a plug-in registry, so you can register arbitrary sentence-level feature functions and they'll be included in the output CSV alongside valence and arousal:
-
-```python
-from affect_analyzer.features.extractor import FeatureExtractor
-
-fe = FeatureExtractor(duration_col="duration", input_col="sentence")
-fe.register_feature("word_count", lambda s: len(s.split()))
-fe.register_feature("question", lambda s: int(s.strip().endswith("?")))
-result = fe.extract(df)
-```
-
----
-
-## The Model & Affect Theory
-
-**Russell's circumplex model of affect** (1980) proposes that all emotional states can be described by two independent dimensions:
-
-- **Valence** — the degree of pleasantness or unpleasantness (−1 = maximally unpleasant, +1 = maximally pleasant)
-- **Arousal** — the degree of activation or deactivation (−1 = maximally calm, +1 = maximally activated)
-
-The bundled model (`models/XLM-RoBERTa-base-MSE/`) is an XLM-RoBERTa-base checkpoint fine-tuned with MSE loss to directly regress (valence, arousal) from text. Outputs are clamped to [−1, 1] on both axes via `Hardtanh`. The multilingual backbone supports English, German, French, Spanish, and other languages covered by XLM-RoBERTa's pretraining.
-
-The model also exposes sentence embeddings (CLS token) which are used internally for **salience scoring** — filtering to the most semantically central sentences before topic modeling, controlled by `--salience_top_percent`.
+The bundled model (`models/XLM-RoBERTa-base-MSE/`) is an XLM-RoBERTa-base checkpoint fine-tuned with MSE loss to regress (valence, arousal) from text. Outputs are clamped to [−1, 1] via `Hardtanh`. The multilingual backbone supports English, German, French, Spanish, and other languages covered by XLM-RoBERTa's pretraining.
 
 See `papers/Acircumplexmodelofaffect.pdf` for the theoretical foundation.
 
 ---
 
-## CLI Reference
+## Project Status
 
-```
-python conversation_affect_analyzer.py [OPTIONS]
+LexiPlex is an **alpha research prototype** with 26 automated tests covering the core library, all four analyzers, and the full pipeline integration.
 
-Options:
-  -i, --input PATH               Path to transcript CSV  [required]
-  -l, --language TEXT            spaCy language code (default: en)
-                                 Supported: en, de, fr, es
-  -m, --model_dir PATH           Path to model weights or HuggingFace model ID
-                                 (default: models/XLM-RoBERTa-base-MSE)
-      --device TEXT              Inference device: cpu or cuda  (default: cpu)
-      --chunksize INT            CSV read chunk size  (default: 10000)
-      --topic_method CHOICE      Topic strategy: global | sliding | js
-                                   global   — fit LDA on all sentences
-                                   sliding  — sliding-window topic drift
-                                   js       — Jensen-Shannon divergence from global unigram
-      --num_topics INT           Number of LDA topics  (default: 5)
-      --max_features INT         Max vocabulary size for LDA  (default: 1000)
-      --topic_keywords_top_n INT Top-N keywords per topic label  (default: 3)
-      --salience_top_percent FLOAT
-                                 Pre-filter to the top X% most salient sentences
-      --window_size INT          Sentences per window (sliding method)  (default: 10)
-      --window_step INT          Step size in sentences (sliding method)  (default: 5)
-      --plot_circumplex          Show interactive Russell circumplex plot
-```
-
----
-
-## Project Status & Limitations
-
-LexiPlex is an **alpha research prototype**. It is functional and usable, but carries the following caveats:
-
-- **No test suite.** There are no automated tests; results should be validated manually.
 - **APIs may change.** Class interfaces and CLI flags are not yet stable.
-- **Model weights in git.** The XLM-RoBERTa checkpoint is checked into the repository, which is not ideal for distribution. A future release will separate model storage.
-- **Transcripts only.** LexiPlex operates on text. It assumes ASR (automatic speech recognition) has already been run if your source is audio.
-- **Sliding-window and JS-divergence topic methods** are less tested than global LDA and may behave unexpectedly on short transcripts.
+- **Model weights not in the repository.** Place XLM-RoBERTa weights under `models/XLM-RoBERTa-base-MSE/`. Without them the pipeline uses random scores.
+- **Transcripts only.** LexiPlex operates on text. It assumes ASR has already been run if your source is audio.
 - **Language support** depends on spaCy model availability. Only `en`, `de`, `fr`, and `es` are explicitly mapped; other languages fall back to `{lang}_core_news_sm`.
-
-Issues and pull requests are welcome. Planned directions include a proper test suite, a pip-installable package, and an integrated audio-to-transcript preprocessing step.
