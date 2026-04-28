@@ -361,15 +361,177 @@ def _render_scorecard_strip(results: dict, turns_so_far: pd.DataFrame,
 
 
 def _chapter_complexity(results: dict) -> None:
-    st.info("Complexity chapter — implemented in Task 13.")
+    st.header("Linguistic Complexity")
+    st.markdown(
+        "**Coherence** measures how similar adjacent sentences are in meaning — computed from "
+        "XLM-RoBERTa embeddings, no extra inference needed. "
+        "**Type-token ratio (TTR)** measures vocabulary richness: more unique words = higher TTR. "
+        "**Lexical density** is the proportion of content words (nouns, verbs, adjectives, adverbs)."
+    )
+    cdf = results.get("complexity", {}).get("per_sentence")
+    if cdf is None or len(cdf) == 0:
+        st.warning("No complexity data available.")
+        return
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Coherence over time")
+        fig = go.Figure()
+        if "speaker" in cdf.columns:
+            for speaker, color in SPEAKER_COLORS.items():
+                sub = cdf[cdf["speaker"] == speaker].reset_index(drop=True)
+                fig.add_trace(go.Scatter(
+                    y=sub["coherence_to_prev"].tolist(), mode="lines+markers",
+                    name=speaker, line=dict(color=color, width=2), marker=dict(size=5),
+                ))
+        else:
+            fig.add_trace(go.Scatter(y=cdf["coherence_to_prev"].tolist(), mode="lines+markers"))
+        fig.update_layout(
+            xaxis_title="Sentence", yaxis_title="Coherence (cosine sim)",
+            plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+            font=dict(color="#aaa"), height=280, margin=dict(l=40, r=10, t=10, b=40),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        st.subheader("Vocabulary richness per speaker")
+        if "speaker" in cdf.columns:
+            stats = cdf.groupby("speaker")[["type_token_ratio", "lexical_density"]].mean().reset_index()
+            fig2 = go.Figure()
+            for col_name, label in [("type_token_ratio", "TTR"), ("lexical_density", "Lexical Density")]:
+                fig2.add_trace(go.Bar(x=stats["speaker"].tolist(), y=stats[col_name].tolist(), name=label))
+            fig2.update_layout(
+                barmode="group", plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                font=dict(color="#aaa"), height=280, margin=dict(l=40, r=10, t=10, b=40),
+                yaxis_title="Score",
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+
+    st.markdown("### Health context")
+    st.info(
+        "Falling coherence over a session may signal dissociation or cognitive fatigue. "
+        "A large TTR gap between therapist and client can reveal communication asymmetry."
+    )
 
 
 def _chapter_clinical(results: dict) -> None:
-    st.info("Clinical markers chapter — implemented in Task 13.")
+    st.header("Clinical Markers")
+    st.markdown(
+        "Rule-based markers computed from word patterns alone — no model, fully transparent. "
+        "Each score is a rate per sentence (proportion of words matching the marker category)."
+    )
+    cldf = results.get("clinical", {}).get("per_sentence")
+    if cldf is None or len(cldf) == 0:
+        st.warning("No clinical marker data available.")
+        return
+    if "speaker" not in cldf.columns:
+        st.warning("Speaker column required.")
+        return
+
+    markers = {
+        "hedging_rate": "Hedging",
+        "certainty_rate": "Certainty",
+        "self_ref_rate": "Self-reference",
+        "negation_density": "Negation",
+    }
+    stats = cldf.groupby("speaker")[list(markers.keys())].mean().reset_index()
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.subheader("Rates per speaker")
+        fig = go.Figure()
+        for col_name, label in markers.items():
+            fig.add_trace(go.Bar(x=stats["speaker"].tolist(), y=stats[col_name].tolist(), name=label))
+        fig.update_layout(
+            barmode="group", plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+            font=dict(color="#aaa"), height=300, margin=dict(l=40, r=10, t=10, b=40),
+            yaxis_title="Rate",
+        )
+        st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        st.subheader("Question rate per speaker")
+        q = cldf.groupby("speaker")["is_question"].mean().reset_index()
+        q.columns = ["Speaker", "Question rate"]
+        q["Question rate"] = (q["Question rate"] * 100).round(1).astype(str) + "%"
+        st.dataframe(q, use_container_width=True, hide_index=True)
+        st.subheader("Progress bars")
+        for speaker in cldf["speaker"].unique():
+            sub = cldf[cldf["speaker"] == speaker]
+            color = SPEAKER_COLORS.get(str(speaker), DEFAULT_COLOR)
+            st.markdown(f'<span style="color:{color};font-weight:700;">{speaker}</span>',
+                        unsafe_allow_html=True)
+            for col_name, label in markers.items():
+                val = float(sub[col_name].mean())
+                st.progress(min(val, 1.0), text=f"{label}: {val:.1%}")
+
+    st.markdown("### Health context")
+    st.info(
+        "High **hedging** + low **certainty** = avoidant language. "
+        "High **self-reference** + **negation** are established markers of depressive cognition (Beck, 1979). "
+        "**Question rate** in the therapist track reflects engagement strategy."
+    )
 
 
 def _chapter_dynamics(results: dict) -> None:
-    st.info("Dynamics chapter — implemented in Task 13.")
+    st.header("Conversational Dynamics")
+    st.markdown(
+        "Structural patterns derived entirely from timestamps — who speaks, for how long, "
+        "and how quickly they respond. No language model required."
+    )
+    dyn_meta = results.get("dynamics", {}).get("metadata", {})
+    per_speaker = results.get("dynamics", {}).get("metadata_dfs", {}).get("per_speaker")
+    latencies = dyn_meta.get("latencies", [])
+    gm = results.get("dynamics", {}).get("global_metrics", {})
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        st.subheader("Talk time")
+        if per_speaker is not None:
+            fig = go.Figure(go.Pie(
+                labels=per_speaker.index.tolist(),
+                values=per_speaker["dominance_pct"].tolist(),
+                marker=dict(colors=[SPEAKER_COLORS.get(str(s), DEFAULT_COLOR)
+                                    for s in per_speaker.index]),
+                hole=0.5, textinfo="label+percent",
+            ))
+            fig.update_layout(
+                plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                font=dict(color="#aaa"), height=260,
+                margin=dict(l=10, r=10, t=10, b=10), showlegend=False,
+            )
+            st.plotly_chart(fig, use_container_width=True)
+
+    with col2:
+        st.subheader("Response latency")
+        if latencies:
+            fig2 = go.Figure(go.Histogram(x=latencies, nbinsx=20,
+                                          marker_color="#7e9ec9", opacity=0.8))
+            fig2.update_layout(
+                xaxis_title="Gap (s)", yaxis_title="Count",
+                plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+                font=dict(color="#aaa"), height=260,
+                margin=dict(l=40, r=10, t=10, b=40),
+            )
+            st.plotly_chart(fig2, use_container_width=True)
+        st.metric("Mean latency", f"{gm.get('latency_mean', 0):.1f}s")
+        st.metric("Total silence", f"{gm.get('silence_total', 0):.1f}s")
+
+    with col3:
+        st.subheader("Per-speaker stats")
+        if per_speaker is not None:
+            display = per_speaker[["turns", "total_duration", "mean_utterance_length",
+                                   "dominance_pct"]].copy()
+            display.columns = ["Turns", "Total (s)", "Mean (s)", "Talk %"]
+            st.dataframe(display.round(1), use_container_width=True)
+
+    st.markdown("### Health context")
+    st.info(
+        "Therapist/client **talk ratio** is a core process measure in psychotherapy research. "
+        "Long **silences** (>3 s) can indicate the client is processing or avoiding. "
+        "Growing client utterance length over a session signals increasing engagement."
+    )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
