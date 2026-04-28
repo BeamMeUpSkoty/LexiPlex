@@ -57,3 +57,34 @@ def test_affect_analyzer_global_metrics_per_speaker():
     result = AffectAnalyzer(model=_make_mock_model()).analyze(_make_df(), _make_cache())
     assert "Client_valence_mean" in result.global_metrics
     assert "Therapist_valence_mean" in result.global_metrics
+
+
+# ---- ComplexityAnalyzer ----
+
+def test_complexity_analyzer_adds_expected_columns():
+    from affect_analyzer.analyzers.complexity import ComplexityAnalyzer
+    import spacy
+    nlp = spacy.load("en_core_web_sm")
+    result = ComplexityAnalyzer(nlp=nlp).analyze(_make_df(), _make_cache())
+    for col in ("word_count", "type_token_ratio", "lexical_density", "coherence_to_prev"):
+        assert col in result.per_sentence.columns, f"Missing column: {col}"
+    assert result.name == "complexity"
+
+
+def test_complexity_first_sentence_coherence_is_nan():
+    from affect_analyzer.analyzers.complexity import ComplexityAnalyzer
+    import spacy
+    nlp = spacy.load("en_core_web_sm")
+    result = ComplexityAnalyzer(nlp=nlp).analyze(_make_df(), _make_cache())
+    first = result.per_sentence["coherence_to_prev"].iloc[0]
+    assert pd.isna(first)
+
+
+def test_complexity_global_metrics_per_speaker():
+    from affect_analyzer.analyzers.complexity import ComplexityAnalyzer
+    import spacy
+    nlp = spacy.load("en_core_web_sm")
+    result = ComplexityAnalyzer(nlp=nlp).analyze(_make_df(), _make_cache())
+    assert "Client_ttr_mean" in result.global_metrics
+    assert "Therapist_ttr_mean" in result.global_metrics
+    assert "coherence_mean" in result.global_metrics
