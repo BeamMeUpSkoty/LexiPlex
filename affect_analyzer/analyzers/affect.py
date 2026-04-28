@@ -16,6 +16,11 @@ class AffectAnalyzer(BaseAnalyzer):
     """
     Scores each sentence on valence and arousal via XLM-RoBERTa batch_score().
     Optionally assigns LDA topic clusters.
+
+    Note on EmbeddingCache: the pipeline computes CLS embeddings via embed_sentences()
+    and stores them in the cache for use by ComplexityAnalyzer (coherence). Affect scoring
+    uses a separate classification-head forward pass (batch_score()) and does not read from
+    the cache — these are two distinct model operations with different outputs.
     """
 
     def __init__(

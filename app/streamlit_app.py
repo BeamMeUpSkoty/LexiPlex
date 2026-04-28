@@ -192,7 +192,11 @@ def _chapter_affect(results: dict, utterances: pd.DataFrame) -> None:
 
     current_idx = st.session_state.affect_idx
     turns_so_far = turns.iloc[: current_idx + 1]
-    affect_so_far = affect_df.iloc[: current_idx + 1]
+    # Filter by turn_id so multi-sentence turns are fully included
+    if "turn_id" in affect_df.columns:
+        affect_so_far = affect_df[affect_df["turn_id"] <= current_idx]
+    else:
+        affect_so_far = affect_df.iloc[: current_idx + 1]
 
     left_col, right_col = st.columns([1, 1])
     with left_col:
@@ -299,7 +303,15 @@ def _render_circumplex_panel(turns_so_far: pd.DataFrame) -> None:
 def _render_scorecard_strip(results: dict, turns_so_far: pd.DataFrame,
                              affect_so_far: pd.DataFrame) -> None:
     cols = st.columns(4)
-    n = len(turns_so_far)
+    # Derive a turn_id filter so multi-sentence turns are handled correctly
+    max_turn_id = int(affect_so_far["turn_id"].max()) if (
+        "turn_id" in affect_so_far.columns and len(affect_so_far) > 0
+    ) else len(turns_so_far) - 1
+
+    def _by_turn(df: pd.DataFrame) -> pd.DataFrame:
+        if "turn_id" in df.columns:
+            return df[df["turn_id"] <= max_turn_id]
+        return df.iloc[: len(affect_so_far)]
 
     with cols[0]:
         st.markdown("**Affect**")
@@ -318,7 +330,7 @@ def _render_scorecard_strip(results: dict, turns_so_far: pd.DataFrame,
         st.markdown("**Complexity**")
         cdf = results.get("complexity", {}).get("per_sentence")
         if cdf is not None:
-            shown = cdf.iloc[:n]
+            shown = _by_turn(cdf)
             coh = shown["coherence_to_prev"].dropna().mean()
             st.metric("Coherence", f"{coh:.2f}" if not pd.isna(coh) else "—")
             if "speaker" in shown.columns:
@@ -331,7 +343,7 @@ def _render_scorecard_strip(results: dict, turns_so_far: pd.DataFrame,
         st.markdown("**Clinical**")
         cldf = results.get("clinical", {}).get("per_sentence")
         if cldf is not None:
-            shown = cldf.iloc[:n]
+            shown = _by_turn(cldf)
             if "speaker" in shown.columns:
                 for speaker, color in SPEAKER_COLORS.items():
                     sub = shown[shown["speaker"] == speaker]
