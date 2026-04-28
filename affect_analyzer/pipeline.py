@@ -1,82 +1,65 @@
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING, Optional
+
+import pandas as pd
+
+from .core.base import EmbeddingCache, AnalysisResult
+from .core.registry import AnalyzerRegistry
 from .data_types.transcript import TranscriptFile
 from .preprocessing.language import LanguageProcessor
-from .modeling.valence_arousal import ValenceArousalModel
-from .topics.topic_modeler import TopicModeler
-from .features.extractor import FeatureExtractor
-from .plotting.circumplex import plot_circumplex
-import pandas as pd
+
+if TYPE_CHECKING:
+    from .modelling.valence_arousal import ValenceArousalModel
 
 logger = logging.getLogger(__name__)
 
-class ConversationPipeline:
+
+def _add_turn_info(df: pd.DataFrame) -> pd.DataFrame:
+    """Add turn_id and is_turn_start based on consecutive speaker changes."""
+    if "speaker" not in df.columns:
+        df["turn_id"] = 0
+        df["is_turn_start"] = False
+        return df
+    first_speaker = df["speaker"].iloc[0]
+    speaker_changes = df["speaker"] != df["speaker"].shift(fill_value=first_speaker)
+    df = df.copy()
+    df["turn_id"] = speaker_changes.cumsum() - 1
+    df["is_turn_start"] = speaker_changes
+    return df
+
+
+class LexiPlexPipeline:
+    """Loads a transcript, embeds sentences once, and dispatches to all registered analyzers."""
+
     def __init__(
         self,
-        transcript_path: str,
-        output_dir: str,
-        model_name: str = None,
-        num_topics: int = 5,
-        **kwargs
-    ):
-        self.transcript_path = transcript_path
-        self.output_dir = output_dir
-        self.processor = LanguageProcessor()
-        self.model = ValenceArousalModel(model_name)
-        self.topic_modeler = TopicModeler(num_topics=num_topics)
-        self.fe = FeatureExtractor()
+        registry: AnalyzerRegistry,
+        model: Optional[ValenceArousalModel] = None,
+        language: str = "en",
+    ) -> None:
+        self.registry = registry
+        self.processor = LanguageProcessor(language)
+        if model is not None:
+            self.model = model
+        else:
+            from .modelling.valence_arousal import ValenceArousalModel
+            self.model = ValenceArousalModel()
 
-    def run(self):
-        # 1. Load and split into sentences
-        df = TranscriptFile.load(self.transcript_path).to_sentence_df()
-        logger.info("Loaded transcript with %d sentences", len(df))
+    def run(self, path: str) -> dict[str, AnalysisResult]:
+        tf = TranscriptFile.open_file(path, language=self.processor.language)
+        df = self.processor.preprocess_transcript(tf)
 
-        # 2. Preprocess text
-        df['clean'] = self.processor.clean_series(df['sentence'])
-        logger.info("Preprocessed text")
+        if "duration" not in df.columns:
+            df["duration"] = df["end"] - df["start"]
+        df = _add_turn_info(df)
 
-        # 3. Topic modeling
-        df['topic'] = self.topic_modeler.assign_topics(df['clean'])
-        logger.info("Assigned topics")
+        logger.info("Loaded %d sentences from %s", len(df), path)
 
-        # 4. Compute valence/arousal
-        scores = self.model.score_batch(df['clean'].tolist())
-        df[['valence', 'arousal']] = scores
-        logger.info("Computed valence/arousal scores")
+        cache = EmbeddingCache(
+            embeddings=self.model.embed_sentences(df["sentence"].tolist()),
+            sentences=df["sentence"].tolist(),
+        )
 
-        # 5. Plot per speaker circumplex
-        for speaker, group in df.groupby('speaker'):
-            fig = plot_circumplex(group, 'speaker')
-            fig.savefig(f"{self.output_dir}/{speaker}_circumplex.png")
-            logger.debug("Saved circumplex for %s", speaker)
-
-        # 6. Plot per topic circumplex
-        fig = plot_circumplex(df, 'topic')
-        fig.savefig(f"{self.output_dir}/topic_circumplex.png")
-        logger.info("Saved topic circumplex")
-
-        # 7. Export CSV with features
-        out_csv = f"{self.output_dir}/conversation_features.csv"
-        df.to_csv(out_csv, index=False)
-        logger.info("Exported features to %s", out_csv)
-
-        return df
-
-
-if __name__ == '__main__':  # for ad-hoc runs
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Run Conversation Affect Analysis")
-    parser.add_argument('transcript', help='Path to transcript file')
-    parser.add_argument('output', help='Directory to write outputs')
-    parser.add_argument('--model', help='HuggingFace model name', default=None)
-    parser.add_argument('--topics', type=int, help='Number of topics', default=5)
-    args = parser.parse_args()
-
-    logging.basicConfig(level=logging.INFO)
-    pipeline = ConversationPipeline(
-        transcript_path=args.transcript,
-        output_dir=args.output,
-        model_name=args.model,
-        num_topics=args.topics
-    )
-    pipeline.run()
+        return self.registry.run_all(df, cache)
