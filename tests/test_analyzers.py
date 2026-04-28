@@ -88,3 +88,45 @@ def test_complexity_global_metrics_per_speaker():
     assert "Client_ttr_mean" in result.global_metrics
     assert "Therapist_ttr_mean" in result.global_metrics
     assert "coherence_mean" in result.global_metrics
+
+
+# ---- ClinicalMarkerAnalyzer ----
+
+def test_clinical_analyzer_adds_expected_columns():
+    from affect_analyzer.analyzers.clinical import ClinicalMarkerAnalyzer
+    result = ClinicalMarkerAnalyzer().analyze(_make_df(), EmbeddingCache())
+    for col in ("hedging_rate", "certainty_rate", "self_ref_rate", "negation_density", "is_question"):
+        assert col in result.per_sentence.columns, f"Missing: {col}"
+    assert result.name == "clinical"
+
+
+def test_clinical_detects_hedging_and_not_certainty():
+    from affect_analyzer.analyzers.clinical import ClinicalMarkerAnalyzer
+    df = pd.DataFrame({
+        "sentence": ["Maybe I'll go.", "I definitely will.", "Perhaps not."],
+        "speaker": ["Client", "Client", "Client"],
+        "start": [0.0, 5.0, 10.0], "end": [4.0, 9.0, 13.0],
+        "duration": [4.0, 4.0, 3.0], "turn_id": [0, 1, 2],
+        "is_turn_start": [True, False, False],
+    })
+    result = ClinicalMarkerAnalyzer().analyze(df, EmbeddingCache())
+    hedge = result.per_sentence["hedging_rate"]
+    assert hedge.iloc[0] > 0    # "Maybe"
+    assert hedge.iloc[1] == 0   # "I definitely will" — no hedging
+    assert hedge.iloc[2] > 0    # "Perhaps"
+
+
+def test_clinical_detects_questions():
+    from affect_analyzer.analyzers.clinical import ClinicalMarkerAnalyzer
+    df = pd.DataFrame({
+        "sentence": ["How are you?", "I am fine.", "Really?"],
+        "speaker": ["Therapist", "Client", "Therapist"],
+        "start": [0.0, 5.0, 10.0], "end": [3.0, 8.0, 11.0],
+        "duration": [3.0, 3.0, 1.0], "turn_id": [0, 1, 2],
+        "is_turn_start": [True, True, True],
+    })
+    result = ClinicalMarkerAnalyzer().analyze(df, EmbeddingCache())
+    is_q = result.per_sentence["is_question"]
+    assert is_q.iloc[0] == 1
+    assert is_q.iloc[1] == 0
+    assert is_q.iloc[2] == 1
