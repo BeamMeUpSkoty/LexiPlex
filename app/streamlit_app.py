@@ -150,7 +150,214 @@ def _make_circumplex_explainer() -> go.Figure:
 # ── Stubs for chapters 2–5 (filled in Tasks 12–13) ───────────────────────────
 
 def _chapter_affect(results: dict, utterances: pd.DataFrame) -> None:
-    st.info("Affect chapter — implemented in Task 12.")
+    st.header("Affect Analysis")
+    st.markdown(
+        "Each utterance is scored on **valence** (pleasant ↔ unpleasant) and **arousal** "
+        "(activated ↔ calm) using an XLM-RoBERTa model fine-tuned for affect regression. "
+        "Press **▶ Play** to watch the session unfold utterance by utterance."
+    )
+
+    affect_df = results["affect"]["per_sentence"]
+
+    # Build utterance-level playback index from turn boundaries
+    if "turn_id" in affect_df.columns:
+        turns = affect_df.groupby("turn_id").first().reset_index()
+    else:
+        turns = affect_df.copy()
+    n_turns = len(turns)
+
+    # Session state
+    if "affect_idx" not in st.session_state:
+        st.session_state.affect_idx = 0
+    if "affect_playing" not in st.session_state:
+        st.session_state.affect_playing = False
+
+    # Controls
+    c1, c2, c3, c4 = st.columns([1, 6, 1, 1])
+    with c1:
+        label = "⏸ Pause" if st.session_state.affect_playing else "▶ Play"
+        if st.button(label):
+            st.session_state.affect_playing = not st.session_state.affect_playing
+            st.rerun()
+    with c2:
+        idx = st.slider("", 0, n_turns - 1, st.session_state.affect_idx,
+                        key="affect_slider", label_visibility="collapsed")
+        if idx != st.session_state.affect_idx:
+            st.session_state.affect_idx = idx
+            st.session_state.affect_playing = False
+    with c3:
+        speed = st.selectbox("", [0.5, 1.0, 2.0], index=1, label_visibility="collapsed")
+    with c4:
+        st.metric("Turn", f"{st.session_state.affect_idx + 1} / {n_turns}")
+
+    current_idx = st.session_state.affect_idx
+    turns_so_far = turns.iloc[: current_idx + 1]
+    affect_so_far = affect_df.iloc[: current_idx + 1]
+
+    left_col, right_col = st.columns([1, 1])
+    with left_col:
+        _render_transcript_panel(turns, current_idx)
+    with right_col:
+        _render_circumplex_panel(turns_so_far)
+
+    st.divider()
+    _render_scorecard_strip(results, turns_so_far, affect_so_far)
+
+    # Auto-advance
+    if st.session_state.affect_playing:
+        time.sleep(1.0 / speed)
+        if st.session_state.affect_idx < n_turns - 1:
+            st.session_state.affect_idx += 1
+        else:
+            st.session_state.affect_playing = False
+        st.rerun()
+
+
+def _render_transcript_panel(turns: pd.DataFrame, current_idx: int) -> None:
+    st.markdown("**Transcript**")
+    window_start = max(0, current_idx - 5)
+    for abs_idx in range(window_start, min(len(turns), current_idx + 3)):
+        row = turns.iloc[abs_idx]
+        speaker = str(row.get("speaker", "Unknown"))
+        color = SPEAKER_COLORS.get(speaker, DEFAULT_COLOR)
+        is_current = abs_idx == current_idx
+        opacity = max(0.2, 1.0 - (current_idx - abs_idx) * 0.15) if abs_idx <= current_idx else 0.18
+
+        if is_current:
+            v = float(row.get("valence", 0.0))
+            a = float(row.get("arousal", 0.0))
+            st.markdown(
+                f'<div style="border:1px solid {color};border-left:3px solid {color};'
+                f'border-radius:6px;padding:8px 10px;margin:4px 0;background:#1a1e28;">'
+                f'<span style="font-size:10px;color:{color};font-weight:700;">'
+                f'{speaker} &nbsp;← now</span><br>'
+                f'<span style="font-size:13px;color:#fff;">{row.get("sentence","")}</span><br>'
+                f'<span style="background:#1a2a1a;border-radius:3px;padding:1px 7px;'
+                f'font-size:10px;color:#7ec97e;margin-top:4px;display:inline-block;">'
+                f'V {v:+.2f}</span> '
+                f'<span style="background:#1a1e2a;border-radius:3px;padding:1px 7px;'
+                f'font-size:10px;color:#7e9ec9;display:inline-block;">A {a:+.2f}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div style="padding:4px 10px;margin:2px 0;opacity:{opacity:.2f};">'
+                f'<span style="font-size:9px;color:{color};">{speaker}</span><br>'
+                f'<span style="font-size:11px;color:#ccc;">{row.get("sentence","")}</span>'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+
+def _render_circumplex_panel(turns_so_far: pd.DataFrame) -> None:
+    theta = np.linspace(0, 2 * np.pi, 120)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=np.cos(theta), y=np.sin(theta), mode="lines",
+        line=dict(color="#444", width=1), showlegend=False, hoverinfo="skip",
+    ))
+    fig.add_hline(y=0, line_dash="dash", line_color="#333")
+    fig.add_vline(x=0, line_dash="dash", line_color="#333")
+
+    if "speaker" in turns_so_far.columns and "valence" in turns_so_far.columns:
+        for speaker, color in SPEAKER_COLORS.items():
+            subset = turns_so_far[turns_so_far["speaker"] == speaker]
+            if len(subset) == 0:
+                continue
+            n = len(subset)
+            opacities = [max(0.15, 0.25 + 0.75 * i / n) for i in range(n)]
+            sizes = [5] * (n - 1) + [13]
+            fig.add_trace(go.Scatter(
+                x=subset["valence"].tolist(),
+                y=subset["arousal"].tolist(),
+                mode="lines+markers",
+                line=dict(color=color, width=1, dash="dot"),
+                marker=dict(size=sizes, color=color, opacity=opacities,
+                            line=dict(width=1, color="#111")),
+                name=speaker,
+                hovertemplate=f"<b>{speaker}</b><br>V: %{{x:.2f}}<br>A: %{{y:.2f}}<extra></extra>",
+            ))
+
+    for x, y, text in [
+        (-0.8, -0.8, "Tense"), (0.8, -0.8, "Excited"),
+        (-0.8, 0.8, "Sad"), (0.8, 0.8, "Calm"),
+    ]:
+        fig.add_annotation(x=x, y=y, text=text, showarrow=False,
+                           font=dict(color="#555", size=10))
+
+    fig.update_layout(
+        xaxis=dict(range=[-1.25, 1.25], title="Valence", showgrid=False),
+        yaxis=dict(range=[-1.25, 1.25], title="Arousal", showgrid=False, scaleanchor="x"),
+        plot_bgcolor="#0e1117", paper_bgcolor="#0e1117",
+        font=dict(color="#aaa"), legend=dict(x=0.02, y=0.98),
+        margin=dict(l=40, r=20, t=20, b=40), height=350,
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+
+def _render_scorecard_strip(results: dict, turns_so_far: pd.DataFrame,
+                             affect_so_far: pd.DataFrame) -> None:
+    cols = st.columns(4)
+    n = len(turns_so_far)
+
+    with cols[0]:
+        st.markdown("**Affect**")
+        if "speaker" in affect_so_far.columns and "valence" in affect_so_far.columns:
+            for speaker, color in SPEAKER_COLORS.items():
+                sub = affect_so_far[affect_so_far["speaker"] == speaker]
+                if len(sub):
+                    v, a = sub["valence"].mean(), sub["arousal"].mean()
+                    st.markdown(
+                        f'<span style="color:{color};font-weight:700;">{speaker}</span> '
+                        f'V {v:+.2f} &nbsp; A {a:+.2f}',
+                        unsafe_allow_html=True,
+                    )
+
+    with cols[1]:
+        st.markdown("**Complexity**")
+        cdf = results.get("complexity", {}).get("per_sentence")
+        if cdf is not None:
+            shown = cdf.iloc[:n]
+            coh = shown["coherence_to_prev"].dropna().mean()
+            st.metric("Coherence", f"{coh:.2f}" if not pd.isna(coh) else "—")
+            if "speaker" in shown.columns:
+                for speaker in SPEAKER_COLORS:
+                    ttr = shown[shown["speaker"] == speaker]["type_token_ratio"].mean()
+                    if not pd.isna(ttr):
+                        st.caption(f"{speaker} TTR: {ttr:.2f}")
+
+    with cols[2]:
+        st.markdown("**Clinical**")
+        cldf = results.get("clinical", {}).get("per_sentence")
+        if cldf is not None:
+            shown = cldf.iloc[:n]
+            if "speaker" in shown.columns:
+                for speaker, color in SPEAKER_COLORS.items():
+                    sub = shown[shown["speaker"] == speaker]
+                    if len(sub):
+                        h = sub["hedging_rate"].mean()
+                        neg = sub["negation_density"].mean()
+                        st.markdown(
+                            f'<span style="color:{color};font-size:11px;">{speaker}</span> '
+                            f'Hedge {h:.0%} &nbsp; Neg {neg:.0%}',
+                            unsafe_allow_html=True,
+                        )
+
+    with cols[3]:
+        st.markdown("**Dynamics**")
+        per_speaker = results.get("dynamics", {}).get("metadata_dfs", {}).get("per_speaker")
+        if per_speaker is not None:
+            for speaker, row in per_speaker.iterrows():
+                color = SPEAKER_COLORS.get(str(speaker), DEFAULT_COLOR)
+                pct = row.get("dominance_pct", 0)
+                st.markdown(
+                    f'<span style="color:{color};font-size:11px;">{speaker}</span> '
+                    f'{pct:.0f}% talk time',
+                    unsafe_allow_html=True,
+                )
+        silence = results.get("dynamics", {}).get("metadata", {}).get("silence_total", 0)
+        st.caption(f"Silence: {float(silence):.1f}s")
 
 
 def _chapter_complexity(results: dict) -> None:
