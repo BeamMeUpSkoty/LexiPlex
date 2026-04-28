@@ -130,3 +130,30 @@ def test_clinical_detects_questions():
     assert is_q.iloc[0] == 1
     assert is_q.iloc[1] == 0
     assert is_q.iloc[2] == 1
+
+
+# ---- DynamicsAnalyzer ----
+
+def test_dynamics_analyzer_returns_per_speaker_metadata():
+    from affect_analyzer.analyzers.dynamics import DynamicsAnalyzer
+    result = DynamicsAnalyzer().analyze(_make_df(), _make_cache())
+    assert result.name == "dynamics"
+    assert "per_speaker" in result.metadata
+    per_speaker = result.metadata["per_speaker"]
+    assert "Client" in per_speaker.index
+    assert "Therapist" in per_speaker.index
+
+
+def test_dynamics_analyzer_latencies_in_metadata():
+    from affect_analyzer.analyzers.dynamics import DynamicsAnalyzer
+    result = DynamicsAnalyzer().analyze(_make_df(), _make_cache())
+    assert "latencies" in result.metadata
+    assert "silence_total" in result.metadata
+    assert isinstance(result.metadata["latencies"], list)
+
+
+def test_dynamics_dominance_sums_to_100():
+    from affect_analyzer.analyzers.dynamics import DynamicsAnalyzer
+    result = DynamicsAnalyzer().analyze(_make_df(), _make_cache())
+    total = result.metadata["per_speaker"]["dominance_pct"].sum()
+    assert abs(total - 100.0) < 0.1
