@@ -16,8 +16,6 @@ from affect_analyzer.analyzers.affect import AffectAnalyzer
 from affect_analyzer.analyzers.clinical import ClinicalMarkerAnalyzer
 from affect_analyzer.analyzers.complexity import ComplexityAnalyzer
 from affect_analyzer.analyzers.dynamics import DynamicsAnalyzer
-from affect_analyzer.modelling.valence_arousal import ValenceArousalModel
-
 DEFAULT_CSV = Path("data/mock_therapy_session.csv")
 SPEAKER_COLORS = {"Client": "#e07070", "Therapist": "#7ec97e"}
 DEFAULT_COLOR = "#7e9ec9"
@@ -30,6 +28,7 @@ st.set_page_config(page_title="LexiPlex", layout="wide", page_icon="🧠")
 @st.cache_resource(show_spinner="Loading language models…")
 def _load_pipeline() -> LexiPlexPipeline:
     try:
+        from affect_analyzer.modelling.valence_arousal import ValenceArousalModel
         model = ValenceArousalModel()
     except Exception:
         model = MagicMock()
